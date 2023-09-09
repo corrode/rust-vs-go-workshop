@@ -229,7 +229,7 @@ Then, let's replace our `main()` function with a server and a route that takes a
 func main() {
 	r := gin.Default()
 
-	r.GET("/api/v1/weather/:city", func(c *gin.Context) {
+	r.GET("/weather/:city", func(c *gin.Context) {
 		city := c.Param("city")
 		latlong, err := getLatLong(city)
 		if err != nil {
@@ -253,7 +253,7 @@ func main() {
 In a separate terminal, we can start the server with `go run .` and make a request to it:
 
 ```bash
-curl localhost:8080/api/v1/weather/Hamburg
+curl localhost:8080/weather/Hamburg
 ```
 
 And we get our weather forecast:
@@ -262,14 +262,59 @@ And we get our weather forecast:
 {"weather":"{\"latitude\":53.550000,\"longitude\":10.000000, ... }
 ```
 
-It's quite fast, too:
+I like the log output and it's quite fast, too!
 
 ```bash
-[GIN] 2023/09/09 - 19:27:20 | 200 |   190.75625ms |       127.0.0.1 | GET      "/api/v1/weather/Hamburg"
-[GIN] 2023/09/09 - 19:28:22 | 200 |   46.597791ms |       127.0.0.1 | GET      "/api/v1/weather/Hamburg"
+[GIN] 2023/09/09 - 19:27:20 | 200 |   190.75625ms |       127.0.0.1 | GET      "/weather/Hamburg"
+[GIN] 2023/09/09 - 19:28:22 | 200 |   46.597791ms |       127.0.0.1 | GET      "/weather/Hamburg"
 ```
 
 #### Templates
+
+We got our endpoint, but raw JSON is not very useful to a normal user.
+In a real-world application, we would probably serve the JSON response on an API endpoint (say `/api/v1/weather/:city`) and add a separate endpoint that returns the HTML page. For the sake of simplicity, we will just return the HTML page directly.
+
+Let's add a simple HTML page that displays the weather forecast for a given city
+as a table. We will use the `html/template` package from the standard library to render the HTML page.
+
+First, we need to define a struct that contains the data we want to display:
+
+```go
+type Weather struct {
+	City    string
+	Weather string
+}
+```
+
+Then, we need to define a template that renders the data:
+
+```go
+const weatherTemplate = `
+<!DOCTYPE html>
+<html>
+<head>
+	<title>Weather forecast for {{ .City }}</title>
+</head>
+<body>
+	<h1>Weather forecast for {{ .City }}</h1>
+	<table>
+		<tr>
+			<th>Weather</th>
+		</tr>
+		<tr>
+			<td>{{ .Weather }}</td>
+		</tr>
+	</table>
+</body>
+</html>
+```
+
+We can then use the `html/template` package to parse the template and render it:
+
+```go
+
+
+
 
 #### Middleware
 
