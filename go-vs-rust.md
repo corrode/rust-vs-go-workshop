@@ -277,14 +277,60 @@ In a real-world application, we would probably serve the JSON response on an API
 Let's add a simple HTML page that displays the weather forecast for a given city
 as a table. We will use the `html/template` package from the standard library to render the HTML page.
 
-First, we need to define a struct that contains the data we want to display:
+First, let's add some structs for our view:
 
 ```go
-type Weather struct {
-	City    string
-	Weather string
+type WeatherData struct 
+type WeatherResponse struct {
+	Latitude  float64 `json:"latitude"`
+	Longitude float64 `json:"longitude"`
+	Timezone  string  `json:"timezone"`
+	Hourly    struct {
+		Time          []string  `json:"time"`
+		Temperature2m []float64 `json:"temperature_2m"`
+	} `json:"hourly"`
+}
+
+type WeatherDisplay struct {
+	City      string
+	Forecasts []Forecast
+}
+
+type Forecast struct {
+	Date        string
+	Temperature string
 }
 ```
+
+We then define a function, which converts the raw JSON response from the weather API to our view structs:
+
+```go
+func extractWeatherData(city string, rawWeather string) (WeatherDisplay, error) {
+	var weatherResponse WeatherResponse
+	if err := json.Unmarshal([]byte(rawWeather), &weatherResponse); err != nil {
+		return WeatherDisplay{}, fmt.Errorf("error decoding weather response: %w", err)
+	}
+
+	var forecasts []Forecast
+	for i, t := range weatherResponse.Hourly.Time {
+		date, err := time.Parse(time.RFC3339, t)
+		if err != nil {
+			return WeatherDisplay{}, err
+		}
+		forecast := Forecast{
+			Date:        date.Format("Mon 15:04"),
+			Temperature: fmt.Sprintf("%.1f°C", weatherResponse.Hourly.Temperature2m[i]),
+		}
+		forecasts = append(forecasts, forecast)
+	}
+	return WeatherDisplay{
+		City:      city,
+		Forecasts: forecasts,
+	}, nil
+}
+```
+
+
 
 Then, we need to define a template that renders the data:
 
