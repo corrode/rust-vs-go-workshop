@@ -70,9 +70,19 @@ As we extend the service, we will add the following features:
 - A simple UI to display the weather forecast
 - A database to store recently searched cities
 
-For the weather forecast, we will use the [OpenWeather API](https://openweathermap.org/api), because it is open source, easy to use, and offers a generous [free tier for non-commercial](https://open-meteo.com/en/pricing) use of up to 10,000 requests per day.
+## The OpenWeather API
 
-Let's get started!
+For the weather forecast, we will use the [Open-Meteo API](https://open-meteo.com/), because it is open source, easy to use, and offers a generous [free tier for non-commercial](https://open-meteo.com/en/pricing) use of up to 10,000 requests per day.
+
+It has two endpoints that we will use:
+
+- The [GeoCoding API](https://open-meteo.com/en/docs/geocoding-api) to get the coordinates of a city.
+- The [Weather Forecast API](https://open-meteo.com/en/docs) to get the weather forecast for the given coordinates.
+
+There are libraries for both Go ([omgo]( https://github.com/HectorMalot/omgo))
+and Rust ([openmeteo](https://github.com/angelodlfrtr/open-meteo-rs))
+, which we would use in a production service. However, for the sake of comparison, we want to see what it takes to make a "raw" HTTP request in
+both languages and convert the response to an idiomatic data structure.
 
 ### A Go web service
 
@@ -97,46 +107,167 @@ the features we need for our weather service.
 
 #### Making HTTP requests
 
-There is a Go library for OpenWeather called [omgo]( https://github.com/HectorMalot/omgo), which we would use in a production service. However, we want to see what it takes to make an HTTP request in Go, so we will use the standard library instead.
-
 Let's start with a simple function that makes an HTTP request to the OpenWeather API and returns the response body as a string:
 
 ```go
-func getWeather(city string) (string, error) {
-	url := fmt.Sprintf("https://api.openweathermap.org/data/2.5/weather?q=%s&appid=%s", city, apiKey)
-	resp, err := http.Get(url)
+func getLatLong(city string) (*LatLong, error) {
+	endpoint := fmt.Sprintf("https://geocoding-api.open-meteo.com/v1/search?name=%s&count=1&language=en&format=json", url.QueryEscape(city))
+	resp, err := http.Get(endpoint)
 	if err != nil {
-		return "", err
+		return nil, fmt.Errorf("error making request to Geo API: %w", err)
 	}
 	defer resp.Body.Close()
-	body, err := ioutil.ReadAll(resp.Body)
-	if err != nil {
-		return "", err
+
+	var response GeoResponse
+	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
+		return nil, fmt.Errorf("error decoding response: %w", err)
 	}
+
+	if len(response.Results) < 1 {
+		return nil, errors.New("no results found")
+	}
+
+	return &response.Results[0], nil
+}
+```
+
+The function takes a city name as an argument and returns the coordinates
+of the city as a `LatLong` struct. 
+
+Note how we handle errors after each step: We check if the HTTP request
+was successful, if the response body could be decoded, and if the response
+contains any results. If any of these steps fails, we return an error
+and abort the function. So far, we just needed to use the standard library,
+which is great.
+
+The `defer` statement ensures that the response body is closed after the
+function returns. This is a common pattern in Go to avoid resource leaks.
+The compiler does not warn us in case we forget, so we need to be careful
+here.
+
+Error handling takes up a big part of the code. It is straightforward,
+but it can be tedious to write and it can make the code harder to read.
+On the plus side, the error handling is easy to follow and it is clear what happens in case of an error.
+
+Since the API returns a JSON object with a list of results, we need to define a struct that matches that response:
+
+```go
+type GeoResponse struct {
+	// A list of results; we only need the first one
+	Results []LatLong `json:"results"`
+}
+
+type LatLong struct {
+	Latitude  float64 `json:"latitude"`
+	Longitude float64 `json:"longitude"`
+}
+```
+
+The `json` tags tell the JSON decoder how to map the JSON fields to the struct fields. Extra fields in the JSON response are ignored by default.
+
+Let's define another function that takes our `LatLong` struct and returns the weather forecast for that location:
+
+```go
+func getWeather(latLong LatLong) (string, error) {
+	endpoint := fmt.Sprintf("https://api.open-meteo.com/v1/forecast?latitude=%.6f&longitude=%.6f&hourly=temperature_2m", latLong.Latitude, latLong.Longitude)
+	resp, err := http.Get(endpoint)
+	if err != nil {
+		return "", fmt.Errorf("error making request to Weather API: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("error reading response body: %w", err)
+	}
+
 	return string(body), nil
 }
 ```
 
-The function takes a city name as an argument and returns the response body as a string. Otherwise it returns an error in case the request fails. Simple enough.
-
-For a start, let's call this function with a hard-coded city name and print the result to the console:
+For a start, let's call these two functions in order and print the result:
 
 ```go
-func main() {
-	weather, err := getWeather("London") // it will be rainy...
+func main() func main() {
+	latlong, err := getLatLong("London") // you know it will rain
 	if err != nil {
-		log.Fatal(err)
+		log.Fatalf("Failed to get latitude and longitude: %s", err)
 	}
-	fmt.Println(weather)
+	fmt.Printf("Latitude: %f, Longitude: %f\n", latlong.Latitude, latlong.Longitude)
+
+	weather, err := getWeather(*latlong)
+	if err != nil {
+		log.Fatalf("Failed to get weather: %s", err)
+	}
+	fmt.Printf("Weather: %s\n", weather)
 }
 ```
 
+This will print the following output:
+
+```bash
+Latitude: 51.508530, Longitude: -0.125740
+Weather: {"latitude":51.5,"longitude":-0.120000124, ... }
+```
+
+Nice! We got the weather forecast for London.
+Let's make this available as a web service.
 
 #### Routing
 
-Routing is one of the most basic tasks of a web framework
-and for our weather service, we need to support two routes:
+Routing is one of the most basic tasks of a web framework.
+First, let's add gin to our project.
 
+```bash
+go mod init github.com/user/goforecast
+go get -u github.com/gin-gonic/gin
+```
+
+Then, let's replace our `main()` function with a server and a route that takes a city name as a path parameter and returns the weather forecast for that city:
+
+```go
+func main() {
+	r := gin.Default()
+
+	r.GET("/api/v1/weather/:city", func(c *gin.Context) {
+		city := c.Param("city")
+		latlong, err := getLatLong(city)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+
+		weather, err := getWeather(*latlong)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+
+		c.JSON(http.StatusOK, gin.H{"weather": weather})
+	})
+
+	r.Run()
+}
+```
+
+In a separate terminal, we can start the server with `go run .` and make a request to it:
+
+```bash
+curl localhost:8080/api/v1/weather/Hamburg
+```
+
+And we get our weather forecast:
+
+```json
+{"weather":"{\"latitude\":53.550000,\"longitude\":10.000000, ... }
+```
+
+It's quite fast, too:
+
+```bash
+[GIN] 2023/09/09 - 19:27:20 | 200 |   190.75625ms |       127.0.0.1 | GET      "/api/v1/weather/Hamburg"
+[GIN] 2023/09/09 - 19:28:22 | 200 |   46.597791ms |       127.0.0.1 | GET      "/api/v1/weather/Hamburg"
+```
 
 #### Templates
 
