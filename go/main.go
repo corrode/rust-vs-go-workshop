@@ -10,6 +10,11 @@ import (
 	"net/url"
 )
 
+const (
+	geoAPIBaseURL     = "https://geocoding-api.open-meteo.com/v1/search"
+	weatherAPIBaseURL = "https://api.open-meteo.com/v1/forecast"
+)
+
 type GeoResponse struct {
 	Results []LatLong `json:"results"`
 }
@@ -20,64 +25,51 @@ type LatLong struct {
 }
 
 func getLatLong(city string) (*LatLong, error) {
-	// Url encode the city name to make it safe for the request
-	city = url.QueryEscape(city)
-	url := fmt.Sprintf("https://geocoding-api.open-meteo.com/v1/search?name=%s&count=1&language=en&format=json", city)
-	resp, err := http.Get(url)
+	endpoint := fmt.Sprintf("%s?name=%s&count=1&language=en&format=json", geoAPIBaseURL, url.QueryEscape(city))
+	resp, err := http.Get(endpoint)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("error making request to Geo API: %w", err)
 	}
-
-	// Always close the response body to prevent resource leaks and ensure connection reuse.
-	// Not closing it can lead to exhausting available file descriptors over time.
 	defer resp.Body.Close()
 
-	// Read the response body
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
-	}
-
-	// Parse the JSON response result
 	var response GeoResponse
-	err = json.Unmarshal(body, &response)
-	if err != nil {
-		return nil, err
+	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
+		return nil, fmt.Errorf("error decoding response: %w", err)
 	}
 
-	// Check if we have at least one result
 	if len(response.Results) < 1 {
 		return nil, errors.New("no results found")
 	}
 
-	// Return the first result
 	return &response.Results[0], nil
 }
 
 func getWeather(latLong LatLong) (string, error) {
-	url := fmt.Sprintf("https://api.open-meteo.com/v1/forecast?latitude=%.6f&longitude=%.6f&hourly=temperature_2m", latLong.Latitude, latLong.Longitude)
-	resp, err := http.Get(url)
+	endpoint := fmt.Sprintf("%s?latitude=%.6f&longitude=%.6f&hourly=temperature_2m", weatherAPIBaseURL, latLong.Latitude, latLong.Longitude)
+	resp, err := http.Get(endpoint)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("error making request to Weather API: %w", err)
 	}
 	defer resp.Body.Close()
+
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("error reading response body: %w", err)
 	}
+
 	return string(body), nil
 }
 
 func main() {
 	latlong, err := getLatLong("Berlin")
 	if err != nil {
-		log.Fatal(err)
+		log.Fatalf("Failed to get latitude and longitude: %s", err)
 	}
 	fmt.Printf("Latitude: %f, Longitude: %f\n", latlong.Latitude, latlong.Longitude)
 
 	weather, err := getWeather(*latlong)
 	if err != nil {
-		log.Fatal(err)
+		log.Fatalf("Failed to get weather: %s", err)
 	}
 	fmt.Printf("Weather: %s\n", weather)
 }
