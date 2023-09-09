@@ -106,8 +106,12 @@ func main() {
 	// Assuming template.html is inside a folder named "views"
 	r.LoadHTMLGlob("views/*")
 
-	r.GET("/weather/:city", func(c *gin.Context) {
-		city := c.Param("city")
+	r.GET("/", func(c *gin.Context) {
+		c.HTML(http.StatusOK, "index.html", nil)
+	})
+
+	r.GET("/weather", func(c *gin.Context) {
+		city := c.Query("city")
 		latlong, err := getLatLong(city)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -126,7 +130,6 @@ func main() {
 			return
 		}
 		c.HTML(http.StatusOK, "weather.html", weatherDisplay)
-
 	})
 
 	r.Run()

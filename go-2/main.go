@@ -61,8 +61,8 @@ func getWeather(latLong LatLong) (string, error) {
 func main() {
 	r := gin.Default()
 
-	r.GET("/weather/:city", func(c *gin.Context) {
-		city := c.Param("city")
+	r.GET("/weather", func(c *gin.Context) {
+		city := c.Query("city")
 		latlong, err := getLatLong(city)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})

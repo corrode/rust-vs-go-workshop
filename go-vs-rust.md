@@ -223,14 +223,33 @@ go mod init github.com/user/goforecast
 go get -u github.com/gin-gonic/gin
 ```
 
-Then, let's replace our `main()` function with a server and a route that takes a city name as a path parameter and returns the weather forecast for that city:
+Then, let's replace our `main()` function with a server and a route that takes a city name as a parameter and returns the weather forecast for that city.
+
+Gin supports path parameters and query parameters.
+
+```go
+// Path parameter
+r.GET("/weather/:city", func(c *gin.Context) {
+		city := c.Param("city")
+		// ...
+})
+
+// Query parameter
+r.GET("/weather", func(c *gin.Context) {
+	city := c.Query("city")
+	// ...
+})
+```go
+
+Which one you want to use depends on your use case.
+In our case, we want to submit the city name from a form in the end, so we will use a query parameter.
 
 ```go
 func main() {
 	r := gin.Default()
 
-	r.GET("/weather/:city", func(c *gin.Context) {
-		city := c.Param("city")
+	r.GET("/weather", func(c *gin.Context) {
+		city := c.Query("city")
 		latlong, err := getLatLong(city)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -253,7 +272,7 @@ func main() {
 In a separate terminal, we can start the server with `go run .` and make a request to it:
 
 ```bash
-curl localhost:8080/weather/Hamburg
+curl "localhost:8080/weather?city=Hamburg"
 ```
 
 And we get our weather forecast:
@@ -265,8 +284,8 @@ And we get our weather forecast:
 I like the log output and it's quite fast, too!
 
 ```bash
-[GIN] 2023/09/09 - 19:27:20 | 200 |   190.75625ms |       127.0.0.1 | GET      "/weather/Hamburg"
-[GIN] 2023/09/09 - 19:28:22 | 200 |   46.597791ms |       127.0.0.1 | GET      "/weather/Hamburg"
+[GIN] 2023/09/09 - 19:27:20 | 200 |   190.75625ms |       127.0.0.1 | GET      "/weather?city=Hamburg"
+[GIN] 2023/09/09 - 19:28:22 | 200 |   46.597791ms |       127.0.0.1 | GET      "/weather?city=Hamburg"
 ```
 
 #### Templates
@@ -302,7 +321,9 @@ type Forecast struct {
 }
 ```
 
-We then define a function, which converts the raw JSON response from the weather API to our view structs:
+This is just a direct mapping of the relevant fields in the JSON response to a struct. There are tools like [transform](https://transform.tools/json-to-go), which make conversion from JSON to Go structs easier. Take a look!
+
+Next we define a function, which converts the raw JSON response from the weather API into our new `WeatherDisplay` struct:
 
 ```go
 func extractWeatherData(city string, rawWeather string) (WeatherDisplay, error) {
@@ -330,39 +351,115 @@ func extractWeatherData(city string, rawWeather string) (WeatherDisplay, error) 
 }
 ```
 
+Date handling is done with the built-in `time` package.
+To learn more about date handling in Go, check out [this "Go by Example" article](https://blog.golang.org/using-go-modules).
 
-
-Then, we need to define a template that renders the data:
+We extend our route handler to render the HTML page:
 
 ```go
-const weatherTemplate = `
+r.GET("/weather", func(c *gin.Context) {
+	city := c.Query("city")
+	latlong, err := getLatLong(city)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	weather, err := getWeather(*latlong)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	//////// NEW CODE STARTS HERE ////////
+	weatherDisplay, err := extractWeatherData(city, weather)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.HTML(http.StatusOK, "weather.html", weatherDisplay)
+	//////////////////////////////////////
+})
+```
+
+Let's deal with the template next.
+Create a template directory called `views` and tell Gin about it:
+
+```go
+r := gin.Default()
+r.LoadHTMLGlob("views/*")
+```
+
+Finally, we can create a template file `weather.html` in the `views` directory:
+
+```html
 <!DOCTYPE html>
 <html>
 <head>
-	<title>Weather forecast for {{ .City }}</title>
+    <title>Weather Forecast</title>
 </head>
 <body>
-	<h1>Weather forecast for {{ .City }}</h1>
-	<table>
-		<tr>
-			<th>Weather</th>
-		</tr>
-		<tr>
-			<td>{{ .Weather }}</td>
-		</tr>
-	</table>
+    <h1>Weather for {{ .City }}</h1>
+    <table border="1">
+        <tr>
+            <th>Date</th>
+            <th>Temperature</th>
+        </tr>
+        {{ range .Forecasts }}
+        <tr>
+            <td>{{ .Date }}</td>
+            <td>{{ .Temperature }}</td>
+        </tr>
+        {{ end }}
+    </table>
 </body>
 </html>
 ```
 
-We can then use the `html/template` package to parse the template and render it:
+(Take a look at the Gin documentation for more [details on how to use templates](https://gin-gonic.com/docs/examples/html-rendering/).)
+
+With that, we have a working web service that returns the weather forecast for a given city as an HTML page!
+
+Oh! Perhaps we also want to create an index page with an input field,
+which allows us to enter a city name and displays the weather forecast for that city.
+
+Let's add a new route handler for the index page:
 
 ```go
+r.GET("/", func(c *gin.Context) {
+	c.HTML(http.StatusOK, "index.html", nil)
+})
+```
 
+And a new template file `index.html`:
 
+```html
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Weather Forecast</title>
+</head>
+<body>
+    <h1>Weather Forecast</h1>
+    <form action="/weather" method="get">
+        <label for="city">City:</label>
+        <input type="text" id="city" name="city">
+        <input type="submit" value="Submit">
+    </form>
+</body>
+</html>
+```
 
+Now we can start our web service and open [http://localhost:8080](http://localhost:8080) in our browser:
+
+![index page](./images/index.png)
+
+As an exercise, you can add some styling to the HTML page,
+but since we care more about the backend, we will leave it at that.
 
 #### Middleware
+
+
 
 #### Database access
 
