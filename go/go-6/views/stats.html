@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>Latest Queries</title>
+</head>
+
+<body>
+    <h1>Latest Lat/Long Lookups</h1>
+    <table border="1">
+        <tr>
+            <th>Cities</th>
+        </tr>
+        {{ range . }}
+        <tr>
+            <td>{{ . }}</td>
+        </tr>
+        {{ end }}
+    </table>
+</body>
+
+</html>

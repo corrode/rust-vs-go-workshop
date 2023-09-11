@@ -457,33 +457,233 @@ Now we can start our web service and open [http://localhost:8080](http://localho
 As an exercise, you can add some styling to the HTML page,
 but since we care more about the backend, we will leave it at that.
 
-#### Middleware
-
-
-
 #### Database access
 
-#### Testing
+Our service fetches the latitude and longitude for a given city from an external API on every single request. That's probably fine in the
+beginning, but eventually we might want to cache the results in a database
+to avoid unnecessary API calls.
 
-#### Deployment
+To do so, let's add a database to our web service.
+We will use [PostgreSQL](https://www.postgresql.org/) as our database and [pgx](https://github.com/jackc/pgx) as the database driver.
+
+First, we create a file named `init.sql`, which will be used to initialize our database:
+
+```sql
+CREATE TABLE IF NOT EXISTS cities (
+    id SERIAL PRIMARY KEY,
+    name TEXT NOT NULL,
+    lat NUMERIC NOT NULL,
+    long NUMERIC NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS cities_name_idx ON cities (name);
+```
+
+We store the latitude and longitude for a given city.
+The `SERIAL` type is a PostgreSQL auto-incrementing integer. Otherwise we would
+have to generate the IDs ourselves on insert.
+To make things fast, we will also add an index on the `name` column.
+
+It's probably easiest to use Docker or any of the cloud providers.
+At the end of the day, you just need *a database URL*, which you can pass to your web service as an environment variable.
+
+We won't go into the details of setting up a database here, but a simple way to get a PostgreSQL database running with Docker locally is:
+
+```
+docker run -p 5432:5432 -e POSTGRES_USER=forecast -e POSTGRES_PASSWORD=forecast -e POSTGRES_DB=forecast -v `pwd`/init.sql:/docker-entrypoint-initdb.d/index.sql -d postgres
+export DATABASE_URL="postgres://forecast:forecast@localhost:5432/forecast?sslmode=disable"
+```
+
+However once we have our database, we need to add the [sqlx](https://github.com/jmoiron/sqlx) dependency to our `go.mod` file:
+
+```go
+go get github.com/jmoiron/sqlx
+```
+
+We can now use the `sqlx` package to connect to our database by using the connection string from the `DATABASE_URL` environment variable:
+
+```go
+_ = sqlx.MustConnect("postgres", os.Getenv("DATABASE_URL"))
+```
+
+And with that, we have a database connection!
+
+Let's add a function to insert a city into our database.
+We will use our `LatLong` struct from earlier.
+
+```go
+func insertCity(db *sqlx.DB, name string, latLong LatLong) error {
+	_, err := db.Exec("INSERT INTO cities (name, lat, long) VALUES ($1, $2, $3)", name, latLong.Latitude, latLong.Longitude)
+	return err
+}
+```
+
+Let's rename our old `getLatLong` function to `fetchLatLong` and add a new `getLatLong` function, which uses the database instead of the external API:
+
+```go
+func getLatLong(db *sqlx.DB, name string) (*LatLong, error) {
+	var latLong *LatLong
+	err := db.Get(&latLong, "SELECT lat, long FROM cities WHERE name = $1", name)
+	if err == nil {
+		return latLong, nil
+	}
+
+	latLong, err = fetchLatLong(name)
+	if err != nil {
+		return nil, err
+	}
+
+	err = insertCity(db, name, *latLong)
+	if err != nil {
+		return nil, err
+	}
+
+	return latLong, nil
+}
+```
+
+Here we directly pass the `db` connection to our `getLatLong` function.
+In a real application, we should decouple the database access from the API logic, to make testing possible.
+We would probably also use an in-memory-cache to avoid unnecessary database calls. This is just to compare database access in Go and Rust.
+
+We need to update our handler:
+
+```go
+r.GET("/weather", func(c *gin.Context) {
+	city := c.Query("city")
+	// Pass in the db
+	latlong, err := getLatLong(db, city)
+	// ...
+})
+```
+
+With that, we have a working web service that stores the latitude and longitude for a given city in a database and fetches it from there on subsequent requests.
+
+#### Middleware
+
+The last bit is to add some middleware to our web service.
+We already got some nice logging for free from Gin.
+
+Let's add a basic-auth middleware and protect our `/stats` endpoint,
+which we will use to print the last search queries.
+
+```go
+r.GET("/stats", gin.BasicAuth(gin.Accounts{
+		"forecast": "forecast",
+	}), func(c *gin.Context) {
+		// rest of the handler
+	}
+)
+```
+
+That's it!
+
+Pro tip: you can also [group routes together](https://jonathanmh.com/go-gin-http-basic-auth/) to apply authentication to multiple routes at once.
+
+Here's the logic to fetch the last search queries from the database:
+
+```go
+func getLastCities(db *sqlx.DB) ([]string, error) {
+	var cities []string
+	err := db.Select(&cities, "SELECT name FROM cities ORDER BY id DESC LIMIT 10")
+	if err != nil {
+		return nil, err
+	}
+	return cities, nil
+}
+```
+
+Now let's wire up our `/stats` endpoint to print the last search queries:
+
+```go
+r.GET("/stats", gin.BasicAuth(gin.Accounts{
+		"forecast": "forecast",
+	}), func(c *gin.Context) {
+		cities, err := getLastCities(db)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		c.HTML(http.StatusOK, "stats.html", cities)
+})
+```
+
+Our `stats.html` template is simple enough:
+
+```html
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>Latest Queries</title>
+</head>
+
+<body>
+    <h1>Latest Lat/Long Lookups</h1>
+    <table border="1">
+        <tr>
+            <th>Cities</th>
+        </tr>
+        {{ range . }}
+        <tr>
+            <td>{{ . }}</td>
+        </tr>
+        {{ end }}
+    </table>
+</body>
+
+</html>
+```
+
+And with that, we have a working web service! Congratulations!
+
+We have achieved the following:
+- A web service that fetches the latitude and longitude for a given city from an external API
+- Stores the latitude and longitude in a database
+- Fetches the latitude and longitude from the database on subsequent requests
+- Prints the last search queries on the `/stats` endpoint
+- Basic-auth to protect the `/stats` endpoint
+- Uses middleware to log requests
+- Templates to render HTML
+
+That's quite a lot of functionality for a few lines of code!
+Let's see how Rust stacks up!
 
 ### A Rust web service
 
+Historically, Rust didn't have a good story for web services.
+There were a few frameworks, but they were quite low-level.
+Only recently, with the emergence of async/await, did the Rust web ecosystem really take off. Suddenly, it was possible to write highly performant web services without a garbage collector and with fearless concurrency.
+
+We will see how Rust compares to Go in terms of ergonomics, performance and safety. But first, we need to choose a web framework.
+
 #### Axum or Actix?
+
+Actix is a very popular web framework in the Rust community.
+It is based on the actor model and uses async/await under the hood.
+In benchmark, [it regularly shows up as one of the fastest web frameworks in the world](https://www.techempower.com/benchmarks/#section=data-r21&test=composite).
+
+[Axum](https://github.com/tokio-rs/axum) is a new web framework that is based on [tower](https://github.com/tower-rs/tower), a library for building async services. It has received a lot attention in the Rust community and is quickly gaining popularity. It is also based on async/await.
+
+Both frameworks are very similar in terms of ergonomics and performance.
+They both support middleware and routing. Each of them would be a good choice for our web service, but we will go with Axum, because it ties in nicely with the rest of the ecosystem and has gotten a lot of attention recently.
 
 #### Routing
 
 #### Templates 
 
-#### Middleware
-
 #### Database access
 
-#### Testing
+#### Middleware
 
-#### Deployment
+## Deployment
 
 ## Which language is right for you?
+
+- Go: 
+  * easy to learn, fast, good for web services
+  * batteries included. We did a lot with just the standard library.
+  * Our only dependency was Gin, which is a very popular web framework.
 
 ## Further reading
 
