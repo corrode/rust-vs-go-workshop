@@ -914,24 +914,6 @@ In our case, we can return a `Result` type:
 
 ```rust
 async fn weather(Query(params): Query<WeatherQuery>) -> Result<String, StatusCode> {
-    let lat_long = fetch_lat_long(&params.city)
-        .await
-        .map_err(|_| StatusCode::NOT_FOUND)?;
-    Ok(format!(
-        "{}: {}, {}",
-        params.city, lat_long.latitude, lat_long.longitude
-    ))
-}
-```
-
-This will return a `404` status code if the city is not found.
-We use `map_err` to convert the error into a `StatusCode` and then
-use the `?` operator to propagate the error.
-
-It would be equally fine and maybe a little easier to read to use `match` instead of `map_err`:
-
-```rust
-async fn weather(Query(params): Query<WeatherQuery>) -> Result<String, StatusCode> {
     match fetch_lat_long(&params.city).await {
         Ok(lat_long) => Ok(format!(
             "{}: {}, {}",
@@ -942,8 +924,34 @@ async fn weather(Query(params): Query<WeatherQuery>) -> Result<String, StatusCod
 }
 ```
 
-In Rust, there are usually multiple ways to do things. It's a matter of
-taste which version you prefer.
+
+This will return a `404` status code if the city is not found.
+We use `match` to match on the result of `fetch_lat_long`. If it is
+`Ok`, we return the weather as a `String`. If it is `Err`, we return
+a `StatusCode::NOT_FOUND`.
+
+We could also use the `map_err` function to convert the error into a
+`StatusCode`:
+
+```rust
+async fn weather(Query(params): Query<WeatherQuery>) -> Result<String, StatusCode> {
+    let lat_long = fetch_lat_long(&params.city)
+        .await
+        .map_err(|_| StatusCode::NOT_FOUND)?;
+    Ok(format!(
+        "{}: {}, {}",
+        params.city, lat_long.latitude, lat_long.longitude
+    ))
+}
+```
+
+This variant has the advantage that we the control flow is more linear:
+we handle the error right away and can then continue with the happy
+path. On the other hand, it takes a while to get used to these combinator patterns until they become second nature.
+
+In Rust, there are usually multiple ways to do things.
+It's a matter of taste which version you prefer.
+In general, keep it simple and don't overthink it.
 
 In any case, let's test our program:
 
@@ -963,6 +971,228 @@ Let's write second function, which will return the weather for a given
 latitude and longitude:
 
 ```rust
+async fn fetch_weather(lat_long: LatLong) -> Result<String, Box<dyn std::error::Error>> {
+    let endpoint = format!(
+        "https://api.open-meteo.com/v1/forecast?latitude={}&longitude={}&hourly=temperature_2m",
+        lat_long.latitude, lat_long.longitude
+    );
+    let response = reqwest::get(&endpoint).await?.text().await?;
+    Ok(response)
+}
+```
+
+Here we make the API request and return the raw response body as a `String`.
+
+We can extend our handler to make the two calls in succession:
+
+```rust
+async fn weather(Query(params): Query<WeatherQuery>) -> Result<String, StatusCode> {
+    let lat_long = fetch_lat_long(&params.city)
+        .await
+        .map_err(|_| StatusCode::NOT_FOUND)?;
+    let weather = fetch_weather(lat_long)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(weather)
+}
+```
+
+This would work, but it would return the raw response body from the 
+Open Meteo API. Let's parse the response and return the data similar
+to the Go version.
+
+As a reminder, here's the Go definition:
+
+```go
+type WeatherResponse struct {
+	Latitude  float64 `json:"latitude"`
+	Longitude float64 `json:"longitude"`
+	Timezone  string  `json:"timezone"`
+	Hourly    struct {
+		Time          []string  `json:"time"`
+		Temperature2m []float64 `json:"temperature_2m"`
+	} `json:"hourly"`
+}
+```
+
+And here is the Rust version:
+
+```rust
+#[derive(Deserialize, Debug)]
+pub struct WeatherResponse {
+    pub latitude: f64,
+    pub longitude: f64,
+    pub timezone: String,
+    pub hourly: Hourly,
+}
+
+#[derive(Deserialize, Debug)]
+pub struct Hourly {
+    pub time: Vec<String>,
+    pub temperature_2m: Vec<f64>,
+}
+```
+
+While we're at it, let's also define the other structs we need:
+
+```rust
+#[derive(Deserialize, Debug)]
+pub struct WeatherDisplay {
+    pub city: String,
+    pub forecasts: Vec<Forecast>,
+}
+
+#[derive(Deserialize, Debug)]
+pub struct Forecast {
+    pub date: String,
+    pub temperature: String,
+}
+```
+
+We can now parse the response body into our structs:
+
+```rust
+async fn fetch_weather(lat_long: LatLong) -> Result<WeatherResponse, Box<dyn std::error::Error>> {
+    let endpoint = format!(
+        "https://api.open-meteo.com/v1/forecast?latitude={}&longitude={}&hourly=temperature_2m",
+        lat_long.latitude, lat_long.longitude
+    );
+    let response = reqwest::get(&endpoint).await?.json::<WeatherResponse>().await?;
+    Ok(response)
+}
+```
+
+Let's adjust the handler. The easiest way to make it compile is to
+return a `String`:
+
+```rust
+async fn weather(Query(params): Query<WeatherQuery>) -> Result<String, StatusCode> {
+    let lat_long = fetch_lat_long(&params.city)
+        .await
+        .map_err(|_| StatusCode::NOT_FOUND)?;
+    let weather = fetch_weather(lat_long)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let display = WeatherDisplay {
+        city: params.city,
+        forecasts: weather
+            .hourly
+            .time
+            .iter()
+            .zip(weather.hourly.temperature_2m.iter())
+            .map(|(date, temperature)| Forecast {
+                date: date.to_string(),
+                temperature: temperature.to_string(),
+            })
+            .collect(),
+    };
+    Ok(format!("{:?}", display))
+}
+```
+
+Note how we mix the parsing logic with the handler logic.
+Let's clean this up a bit by moving the parsing logic into a
+`TryFrom` implementation:
+
+```rust
+impl TryFrom<WeatherResponse> for WeatherDisplay {
+    type Error = Box<dyn std::error::Error>;
+
+    fn try_from(response: WeatherResponse) -> Result<Self, Self::Error> {
+        let display = WeatherDisplay {
+            city: response.timezone,
+            forecasts: response
+                .hourly
+                .time
+                .iter()
+                .zip(response.hourly.temperature_2m.iter())
+                .map(|(date, temperature)| Forecast {
+                    date: date.to_string(),
+                    temperature: temperature.to_string(),
+                })
+                .collect(),
+        };
+        Ok(display)
+    }
+}
+```
+
+That's a start. Our handler now looks like this:
+
+```rust
+async fn weather(Query(params): Query<WeatherQuery>) -> Result<String, StatusCode> {
+    let lat_long = fetch_lat_long(&params.city)
+        .await
+        .map_err(|_| StatusCode::NOT_FOUND)?;
+    let weather = fetch_weather(lat_long)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let display = WeatherDisplay::try_from(weather)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(format!("{:?}", display))
+}
+```
+
+That's already a little bit better. 
+What's distracting is the `map_err` boilerplate.
+We can remove that by introducing a custom error type.
+For instance, we can follow [the example in the `axum` repository](https://github.com/tokio-rs/axum/blob/main/examples/anyhow-error-response/src/main.rs) and use [anyhow](https://github.com/dtolnay/anyhow), 
+a popular crate for error handling:
+
+```bash
+cargo add anyhow
+```
+
+Let's copy the code from the example into our project:
+
+```rust
+// Make our own error that wraps `anyhow::Error`.
+struct AppError(anyhow::Error);
+
+// Tell axum how to convert `AppError` into a response.
+impl IntoResponse for AppError {
+    fn into_response(self) -> Response {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Something went wrong: {}", self.0),
+        )
+            .into_response()
+    }
+}
+
+// This enables using `?` on functions that return `Result<_, anyhow::Error>` to turn them into
+// `Result<_, AppError>`. That way you don't need to do that manually.
+impl<E> From<E> for AppError
+where
+    E: Into<anyhow::Error>,
+{
+    fn from(err: E) -> Self {
+        Self(err.into())
+    }
+}
+```
+
+You don't have to fully understand this code.
+Suffice to say that will set up the error handling for the application
+so that we don't have to deal with it in the handler.
+
+With that, our handler becomes quite simple:
+
+```rust
+async fn weather(Query(params): Query<WeatherQuery>) -> Result<String, AppError> {
+    let lat_long = fetch_lat_long(&params.city).await?;
+    let weather = fetch_weather(lat_long).await?;
+    let display = WeatherDisplay::try_from(weather)?;
+    Ok(format!("{:?}", display))
+}
+```
+
+We have to adjust the `fetch_lang_long` and `fetch_weather` functions
+to return a `Result` with our custom error type:
+
+```rust
+
+
 
 #### Templates 
 
