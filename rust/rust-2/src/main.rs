@@ -1,6 +1,7 @@
 use axum::{extract::Query, http::StatusCode, routing::get, Router};
 use serde::Deserialize;
-use std::net::SocketAddr;
+use std::{error::Error, net::SocketAddr};
+
 
 #[derive(Deserialize, Debug)]
 pub struct GeoResponse {
@@ -74,26 +75,31 @@ pub struct WeatherQuery {
     pub city: String,
 }
 
-async fn weather(Query(params): Query<WeatherQuery>) -> Result<String, StatusCode> {
-    let lat_long = fetch_lat_long(&params.city)
-        .await
-        .map_err(|_| StatusCode::NOT_FOUND)?;
-    let weather = fetch_weather(lat_long)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let display = WeatherDisplay {
-        city: params.city,
-        forecasts: weather
-            .hourly
-            .time
-            .iter()
-            .zip(weather.hourly.temperature_2m.iter())
-            .map(|(date, temperature)| Forecast {
-                date: date.to_string(),
-                temperature: temperature.to_string(),
-            })
-            .collect(),
-    };
+impl TryFrom<WeatherResponse> for WeatherDisplay {
+    type Error = Box<dyn std::error::Error>;
+
+    fn try_from(response: WeatherResponse) -> Result<Self, Self::Error> {
+        let display = WeatherDisplay {
+            city: response.timezone,
+            forecasts: response
+                .hourly
+                .time
+                .iter()
+                .zip(response.hourly.temperature_2m.iter())
+                .map(|(date, temperature)| Forecast {
+                    date: date.to_string(),
+                    temperature: temperature.to_string(),
+                })
+                .collect(),
+        };
+        Ok(display)
+    }
+}
+
+async fn weather(Query(params): Query<WeatherQuery>) -> Result<String, Box<dyn Error>> {
+    let lat_long = fetch_lat_long(&params.city).await?;
+    let weather = fetch_weather(lat_long).await?;
+    let display = WeatherDisplay::try_from(weather)?;
     Ok(format!("{:?}", display))
 }
 
