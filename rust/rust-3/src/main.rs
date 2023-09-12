@@ -60,9 +60,8 @@ pub struct Hourly {
     pub temperature_2m: Vec<f64>,
 }
 
-#[derive(Template)]
+#[derive(Template, Deserialize, Debug)]
 #[template(path = "weather.html")]
-#[derive(Deserialize, Debug)]
 pub struct WeatherDisplay {
     pub city: String,
     pub forecasts: Vec<Forecast>,
@@ -95,9 +94,12 @@ async fn fetch_weather(lat_long: LatLong) -> Result<WeatherResponse, anyhow::Err
     Ok(response)
 }
 
-// basic handler that responds with a static string
-async fn index() -> &'static str {
-    "Index"
+#[derive(Template)]
+#[template(path = "index.html")]
+struct IndexTemplate;
+
+async fn index() -> IndexTemplate {
+    IndexTemplate
 }
 
 #[derive(Deserialize)]
@@ -127,8 +129,7 @@ impl WeatherDisplay {
 async fn weather(Query(params): Query<WeatherQuery>) -> Result<WeatherDisplay, AppError> {
     let lat_long = fetch_lat_long(&params.city).await?;
     let weather = fetch_weather(lat_long).await?;
-    let display = WeatherDisplay::new(params.city, weather);
-    Ok(display)
+    Ok(WeatherDisplay::new(params.city, weather))
 }
 
 async fn stats() -> &'static str {

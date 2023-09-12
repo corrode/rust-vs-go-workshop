@@ -1252,7 +1252,62 @@ similar to the Go table template we created earlier:
 </html>
 ```
 
+Let's convert our `WeatherDisplay` struct into a `Template`:
 
+```rust
+#[derive(Template, Deserialize, Debug)]
+#[template(path = "weather.html")]
+struct WeatherDisplay {
+    city: String,
+    forecasts: Vec<Forecast>,
+}
+```
+
+and our handler becomes:
+
+```rust
+async fn weather(Query(params): Query<WeatherQuery>) -> Result<WeatherDisplay, AppError> {
+    let lat_long = fetch_lat_long(&params.city).await?;
+    let weather = fetch_weather(lat_long).await?;
+    Ok(WeatherDisplay::new(params.city, weather))
+}
+```
+
+It was a bit of work to get here, but we now have a nice separation of concerns without too much boilerplate.
+
+If you open the browser at `http://localhost:3000/weather?city=Berlin`, you should see the weather table.
+
+Adding our input mask is easy.
+We can use the exact same HTML we used for the Go version:
+
+```html
+<form action="/weather" method="get"><!DOCTYPE html>
+<html>
+<head>
+    <title>Weather Forecast</title>
+</head>
+<body>
+    <h1>Weather Forecast</h1>
+    <form action="/weather" method="get">
+        <label for="city">City:</label>
+        <input type="text" id="city" name="city">
+        <input type="submit" value="Submit">
+    </form>
+</body>
+</html>
+```
+
+and here is the handler:
+
+```rust
+#[derive(Template)]
+#[template(path = "index.html")]
+struct IndexTemplate;
+
+async fn index() -> IndexTemplate {
+    IndexTemplate
+}
+```
 
 #### Database access
 
