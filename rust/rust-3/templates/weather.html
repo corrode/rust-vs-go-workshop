@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Weather</title>
+  </head>
+  <body>
+    <h1>Weather for {{ city }}</h1>
+    <table>
+      <thead>
+        <tr>
+          <th>Date</th>
+          <th>Temperature</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for forecast in forecasts %}
+        <tr>
+          <td>{{ forecast.date }}</td>
+          <td>{{ forecast.temperature }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </body>
+</html>
