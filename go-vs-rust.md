@@ -670,6 +670,157 @@ They both support middleware and routing. Each of them would be a good choice fo
 
 #### Routing
 
+Let's start the project with a `cargo new forecast` and add the following dependencies to our `Cargo.toml`:
+
+```toml
+[dependencies]
+# web framework
+axum = "0.6.20"
+# async HTTP client
+reqwest = { version = "0.11.20", features = ["json"] }
+# serialization/deserialization  for JSON
+serde = "1.0.188"
+# database access
+sqlx = "0.7.1"
+# async runtime
+tokio = { version = "1.32.0", features = ["full"] }
+```
+
+Let's create a little skeleton for our web service, which doesn't do much.
+
+```rust
+use std::net::SocketAddr;
+
+use axum::{routing::get, Router};
+
+// basic handler that responds with a static string
+async fn index() -> &'static str {
+    "Index"
+}
+
+async fn weather() -> &'static str {
+    "Weather"
+}
+
+async fn stats() -> &'static str {
+    "Stats"
+}
+
+#[tokio::main]
+async fn main() {
+    let app = Router::new()
+        .route("/", get(index))
+        .route("/weather", get(weather))
+        .route("/stats", get(stats));
+
+    let addr = SocketAddr::from(([127, 0, 0, 1], 3000));
+    axum::Server::bind(&addr)
+        .serve(app.into_make_service())
+        .await
+        .unwrap();
+}
+```
+
+The `main` function is pretty straightforward. We create a router and bind it to a socket address. The `index`, `weather` and `stats` functions are our handlers. They are async functions that return a string. We will replace them with actual logic later.
+
+Let's run the web service with `cargo run` and see what happens.
+
+```bash
+$ curl localhost:3000
+Index
+$ curl localhost:3000/weather
+Weather
+$ curl localhost:3000/stats
+Stats
+```
+
+Okay, that works. Let's add some actual logic to our handlers.
+
+Let's write a function that fetches the latitude and longitude for a given city from an external API.
+
+Here are the structs representing the response from the API:
+
+```rust
+use serde::Deserialize;
+
+pub struct GeoResponse {
+    pub results: Vec<LatLong>,
+}
+
+#[derive(Deserialize, Debug, Clone)]
+pub struct LatLong {
+    pub latitude: f64,
+    pub longitude: f64,
+}
+```
+
+In comparison to Go, we don't use tags to specify the field names. Instead, we use the `#[derive(Deserialize)]` attribute to automatically derive the `Deserialize` trait for our structs. These derive macros are very powerful and allow us to do a lot of things with very little code. It is a very common pattern in Rust.
+
+Let's use the new types to fetch the latitude and longitude for a given city:
+
+```rust
+async fn fetch_lat_long(city: &str) -> Result<LatLong, Box<dyn std::error::Error>> {
+    let endpoint = format!(
+        "https://geocoding-api.open-meteo.com/v1/search?name={}&count=1&language=en&format=json",
+        city
+    );
+    let response = reqwest::get(&endpoint).await?.json::<GeoResponse>().await?;
+    response
+        .results
+        .get(0)
+        .cloned()
+        .ok_or("No results found".into())
+}
+```
+
+The code is a bit less verbose than the Go version. We don't have to
+write `if err != nil` constructs, because we can use the `?` operator to
+propagate errors. This is also mandatory, as each step returns a
+`Result` type. If we don't handle the error, we won't get access to the
+value.
+
+That last part might look a bit unfamiliar:
+
+```rust
+response
+    .results
+    .get(0)
+    .cloned()
+    .ok_or("No results found".into())
+```
+
+A few things are happening here:
+
+- `response.results.get(0)` returns an `Option<&LatLong>`. It is an
+  `Option` because the `get` function might return `None` if the vector
+  is empty.
+- `cloned()` clones the value inside the `Option` and converts the
+  `Option<&LatLong>` into an `Option<LatLong>`. This is necessary,
+  because we want to return a `LatLong` and not a reference. Otherwise,
+  we would have to add a lifetime specifier to the function signature and
+  it makes the code less readable.
+- `ok_or("No results found".into())` converts the `Option<LatLong>` into
+  a `Result<LatLong, Box<dyn std::error::Error>>`. If the `Option` is
+  `None`, it will return the error message. The `into()` function
+  converts the string into a `Box<dyn std::error::Error>`.
+
+An alternative way to write this would be:
+
+```rust
+match response.results.get(0) {
+    Some(lat_long) => Ok(lat_long.clone()),
+    None => Err("No results found".into()),
+}
+```
+
+It is a matter of taste which version you prefer. 
+  
+Rust is an expression-based language, which means that we don't have to
+use `return` to return a value from a function. Instead, the last value
+of a function is returned.
+
+
+
 #### Templates 
 
 #### Database access
