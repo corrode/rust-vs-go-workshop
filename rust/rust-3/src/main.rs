@@ -1,13 +1,14 @@
 use anyhow::Context;
 use askama::Template;
 use axum::{
-    extract::Query,
+    extract::{Query, State},
     http::StatusCode,
     response::{IntoResponse, Response},
     routing::get,
     Router,
 };
 use serde::Deserialize;
+use sqlx::PgPool;
 use std::net::SocketAddr;
 
 // Make our own error that wraps `anyhow::Error`.
@@ -126,7 +127,10 @@ impl WeatherDisplay {
     }
 }
 
-async fn weather(Query(params): Query<WeatherQuery>) -> Result<WeatherDisplay, AppError> {
+async fn weather(
+    Query(params): Query<WeatherQuery>,
+    State(pool): State<PgPool>,
+) -> Result<WeatherDisplay, AppError> {
     let lat_long = fetch_lat_long(&params.city).await?;
     let weather = fetch_weather(lat_long).await?;
     Ok(WeatherDisplay::new(params.city, weather))
@@ -137,15 +141,22 @@ async fn stats() -> &'static str {
 }
 
 #[tokio::main]
-async fn main() {
+async fn main() -> anyhow::Result<()> {
+    let db_connection_str = std::env::var("DATABASE_URL").context("DATABASE_URL must be set")?;
+    let pool = sqlx::PgPool::connect(&db_connection_str)
+        .await
+        .context("can't connect to database")?;
+
     let app = Router::new()
         .route("/", get(index))
         .route("/weather", get(weather))
-        .route("/stats", get(stats));
+        .route("/stats", get(stats))
+        .with_state(pool);
 
     let addr = SocketAddr::from(([127, 0, 0, 1], 3000));
     axum::Server::bind(&addr)
         .serve(app.into_make_service())
-        .await
-        .unwrap();
+        .await?;
+
+    Ok(())
 }
