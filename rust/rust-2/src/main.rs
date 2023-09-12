@@ -52,12 +52,15 @@ async fn fetch_lat_long(city: &str) -> Result<LatLong, Box<dyn std::error::Error
         .ok_or("No results found".into())
 }
 
-async fn fetch_weather(lat_long: LatLong) -> Result<String, Box<dyn std::error::Error>> {
+async fn fetch_weather(lat_long: LatLong) -> Result<WeatherResponse, Box<dyn std::error::Error>> {
     let endpoint = format!(
         "https://api.open-meteo.com/v1/forecast?latitude={}&longitude={}&hourly=temperature_2m",
         lat_long.latitude, lat_long.longitude
     );
-    let response = reqwest::get(&endpoint).await?.text().await?;
+    let response = reqwest::get(&endpoint)
+        .await?
+        .json::<WeatherResponse>()
+        .await?;
     Ok(response)
 }
 
@@ -78,7 +81,20 @@ async fn weather(Query(params): Query<WeatherQuery>) -> Result<String, StatusCod
     let weather = fetch_weather(lat_long)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    Ok(weather)
+    let display = WeatherDisplay {
+        city: params.city,
+        forecasts: weather
+            .hourly
+            .time
+            .iter()
+            .zip(weather.hourly.temperature_2m.iter())
+            .map(|(date, temperature)| Forecast {
+                date: date.to_string(),
+                temperature: temperature.to_string(),
+            })
+            .collect(),
+    };
+    Ok(format!("{:?}", display))
 }
 
 async fn stats() -> &'static str {
