@@ -657,13 +657,19 @@ Only recently, with the emergence of async/await, did the Rust web ecosystem rea
 
 We will see how Rust compares to Go in terms of ergonomics, performance and safety. But first, we need to choose a web framework.
 
-#### Axum or Actix?
+#### Which web framework?
+
+If you're looking to get a better overview of Rust web frameworks as well as
+their strengths and weaknesses, we recently did a [Rust web framework deep-dive](https://www.shuttle.rs/blog/2023/08/23/rust-web-framework-comparison).
+
+For the purpose of this article, we consider two web frameworks: 
+[Actix](https://actix.rs/) and [Axum](https://github.com/tokio-rs/axum).
 
 Actix is a very popular web framework in the Rust community.
 It is based on the actor model and uses async/await under the hood.
 In benchmark, [it regularly shows up as one of the fastest web frameworks in the world](https://www.techempower.com/benchmarks/#section=data-r21&test=composite).
 
-[Axum](https://github.com/tokio-rs/axum) is a new web framework that is based on [tower](https://github.com/tower-rs/tower), a library for building async services. It has received a lot attention in the Rust community and is quickly gaining popularity. It is also based on async/await.
+Axum on the other hand is a new web framework that is based on [tower](https://github.com/tower-rs/tower), a library for building async services. It has received a lot attention in the Rust community and is quickly gaining popularity. It is also based on async/await.
 
 Both frameworks are very similar in terms of ergonomics and performance.
 They both support middleware and routing. Each of them would be a good choice for our web service, but we will go with Axum, because it ties in nicely with the rest of the ecosystem and has gotten a lot of attention recently.
@@ -1309,7 +1315,32 @@ async fn index() -> IndexTemplate {
 }
 ```
 
+We reached "feature parity" with the Go version.
+Let's move on to storing the latitudes and longitudes in a database.
+
 #### Database access
+
+We will use [sqlx](https://github.com/launchbadge/sqlx) for database access.
+It's a very popular crate that supports multiple databases. In our case, we will use Postgres, just like in the Go version.
+
+```bash
+# If you haven't done so already
+cargo add sqlx
+```
+
+We need to add a `DATABASE_URL` environment variable to our `.env` file:
+
+```bash
+export DATABASE_URL="postgres://forecast:forecast@localhost:5432/forecast?sslmode=disable"
+```
+
+I'll assume that you have a Postgres database running on your machine and that
+the schema is already set up.
+If not, jump back to the Go version and follow the instructions there.
+
+With that, let's run a query to fetch the latitude and longitude for a city:
+
+
 
 #### Middleware
 
