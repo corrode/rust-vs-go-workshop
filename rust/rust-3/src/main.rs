@@ -41,7 +41,7 @@ pub struct GeoResponse {
     pub results: Vec<LatLong>,
 }
 
-#[derive(Deserialize, Debug, Clone)]
+#[derive(sqlx::FromRow, Deserialize, Debug, Clone)]
 pub struct LatLong {
     pub latitude: f64,
     pub longitude: f64,
@@ -127,11 +127,34 @@ impl WeatherDisplay {
     }
 }
 
+async fn get_lat_long(pool: &PgPool, name: &str) -> Result<LatLong, anyhow::Error> {
+    let lat_long = sqlx::query_as::<_, LatLong>(
+        "SELECT lat AS latitude, long AS longitude FROM cities WHERE name = $1",
+    )
+    .bind(name)
+    .fetch_optional(pool)
+    .await?;
+
+    if let Some(lat_long) = lat_long {
+        return Ok(lat_long);
+    }
+
+    let lat_long = fetch_lat_long(name).await?;
+    sqlx::query("INSERT INTO cities (name, lat, long) VALUES ($1, $2, $3)")
+        .bind(name)
+        .bind(lat_long.latitude)
+        .bind(lat_long.longitude)
+        .execute(pool)
+        .await?;
+
+    Ok(lat_long)
+}
+
 async fn weather(
     Query(params): Query<WeatherQuery>,
     State(pool): State<PgPool>,
 ) -> Result<WeatherDisplay, AppError> {
-    let lat_long = fetch_lat_long(&params.city).await?;
+    let lat_long = get_lat_long(&pool, &params.city).await?;
     let weather = fetch_weather(lat_long).await?;
     Ok(WeatherDisplay::new(params.city, weather))
 }

@@ -1323,9 +1323,15 @@ Let's move on to storing the latitudes and longitudes in a database.
 We will use [sqlx](https://github.com/launchbadge/sqlx) for database access.
 It's a very popular crate that supports multiple databases. In our case, we will use Postgres, just like in the Go version.
 
-```bash
-# If you haven't done so already
-cargo add sqlx
+Add this to your `Cargo.toml`:
+
+```toml
+sqlx = { version = "0.7", features = [
+    "runtime-tokio-rustls",
+    "macros",
+    "any",
+    "postgres",
+] }
 ```
 
 We need to add a `DATABASE_URL` environment variable to our `.env` file:
@@ -1338,8 +1344,105 @@ I'll assume that you have a Postgres database running on your machine and that
 the schema is already set up.
 If not, jump back to the Go version and follow the instructions there.
 
-With that, let's run a query to fetch the latitude and longitude for a city:
+With that, let's adjust our code to use the database.
+First, the `main` function:
 
+```rust
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    let db_connection_str = std::env::var("DATABASE_URL").context("DATABASE_URL must be set")?;
+    let pool = sqlx::PgPool::connect(&db_connection_str)
+        .await
+        .context("can't connect to database")?;
+
+    let app = Router::new()
+        .route("/", get(index))
+        .route("/weather", get(weather))
+        .route("/stats", get(stats))
+        .with_state(pool);
+
+    let addr = SocketAddr::from(([127, 0, 0, 1], 3000));
+    axum::Server::bind(&addr)
+        .serve(app.into_make_service())
+        .await?;
+
+    Ok(())
+}
+```
+
+Here's what changed:
+
+- We added a `DATABASE_URL` environment variable and read it in `main`.
+- We create a database connection pool with `sqlx::PgPool::connect`.
+- Then we pass the pool to `with_state` to make it available to all handlers.
+
+In each route, we can (but don't have to) access the database pool like this:
+
+```rust
+async fn weather(
+    Query(params): Query<WeatherQuery>,
+    State(pool): State<PgPool>,
+) -> Result<WeatherDisplay, AppError> {
+    let lat_long = fetch_lat_long(&params.city).await?;
+    let weather = fetch_weather(lat_long).await?;
+    Ok(WeatherDisplay::new(params.city, weather))
+}
+```
+
+To learn more about `State`, check out the [documentation](https://docs.rs/axum/latest/axum/extract/struct.State.html).
+
+To make our data fetchable from the database, we need to add a `FromRow` trait to our structs:
+
+```rust
+#[derive(sqlx::FromRow, Deserialize, Debug, Clone)]
+pub struct LatLong {
+    pub latitude: f64,
+    pub longitude: f64,
+}
+```
+
+Let's add a function to fetch the latitudes and longitudes from the database:
+
+```rust
+async fn get_lat_long(pool: &PgPool, name: &str) -> Result<LatLong, anyhow::Error> {
+    let lat_long = sqlx::query_as::<_, LatLong>(
+        "SELECT lat AS latitude, long AS longitude FROM cities WHERE name = $1",
+    )
+    .bind(name)
+    .fetch_optional(pool)
+    .await?;
+
+    if let Some(lat_long) = lat_long {
+        return Ok(lat_long);
+    }
+
+    let lat_long = fetch_lat_long(name).await?;
+    sqlx::query("INSERT INTO cities (name, lat, long) VALUES ($1, $2, $3)")
+        .bind(name)
+        .bind(lat_long.latitude)
+        .bind(lat_long.longitude)
+        .execute(pool)
+        .await?;
+
+    Ok(lat_long)
+}
+```
+
+and finally, let's update our `weather` route to use the new function:
+
+```rust
+async fn weather(
+    Query(params): Query<WeatherQuery>,
+    State(pool): State<PgPool>,
+) -> Result<WeatherDisplay, AppError> {
+    let lat_long = fetch_lat_long(&params.city).await?;
+    let weather = fetch_weather(lat_long).await?;
+    Ok(WeatherDisplay::new(params.city, weather))
+}
+```
+
+And that's it! We now have a working web app with a database backend.
+The behavior is identical to before, but now we chache the latitudes and longitudes.
 
 
 #### Middleware
