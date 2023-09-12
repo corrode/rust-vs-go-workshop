@@ -1,7 +1,38 @@
-use axum::{extract::Query, http::StatusCode, routing::get, Router};
+use anyhow::Context;
+use axum::{
+    extract::Query,
+    http::StatusCode,
+    response::{IntoResponse, Response},
+    routing::get,
+    Router,
+};
 use serde::Deserialize;
-use std::{error::Error, net::SocketAddr};
+use std::net::SocketAddr;
 
+// Make our own error that wraps `anyhow::Error`.
+struct AppError(anyhow::Error);
+
+// Tell axum how to convert `AppError` into a response.
+impl IntoResponse for AppError {
+    fn into_response(self) -> Response {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Something went wrong: {}", self.0),
+        )
+            .into_response()
+    }
+}
+
+// This enables using `?` on functions that return `Result<_, anyhow::Error>` to turn them into
+// `Result<_, AppError>`. That way you don't need to do that manually.
+impl<E> From<E> for AppError
+where
+    E: Into<anyhow::Error>,
+{
+    fn from(err: E) -> Self {
+        Self(err.into())
+    }
+}
 
 #[derive(Deserialize, Debug)]
 pub struct GeoResponse {
@@ -40,20 +71,16 @@ pub struct Forecast {
     pub temperature: String,
 }
 
-async fn fetch_lat_long(city: &str) -> Result<LatLong, Box<dyn std::error::Error>> {
+async fn fetch_lat_long(city: &str) -> Result<LatLong, anyhow::Error> {
     let endpoint = format!(
         "https://geocoding-api.open-meteo.com/v1/search?name={}&count=1&language=en&format=json",
         city
     );
     let response = reqwest::get(&endpoint).await?.json::<GeoResponse>().await?;
-    response
-        .results
-        .get(0)
-        .cloned()
-        .ok_or("No results found".into())
+    response.results.get(0).cloned().context("No results found")
 }
 
-async fn fetch_weather(lat_long: LatLong) -> Result<WeatherResponse, Box<dyn std::error::Error>> {
+async fn fetch_weather(lat_long: LatLong) -> Result<WeatherResponse, anyhow::Error> {
     let endpoint = format!(
         "https://api.open-meteo.com/v1/forecast?latitude={}&longitude={}&hourly=temperature_2m",
         lat_long.latitude, lat_long.longitude
@@ -76,7 +103,7 @@ pub struct WeatherQuery {
 }
 
 impl TryFrom<WeatherResponse> for WeatherDisplay {
-    type Error = Box<dyn std::error::Error>;
+    type Error = anyhow::Error;
 
     fn try_from(response: WeatherResponse) -> Result<Self, Self::Error> {
         let display = WeatherDisplay {
@@ -96,7 +123,7 @@ impl TryFrom<WeatherResponse> for WeatherDisplay {
     }
 }
 
-async fn weather(Query(params): Query<WeatherQuery>) -> Result<String, Box<dyn Error>> {
+async fn weather(Query(params): Query<WeatherQuery>) -> Result<String, AppError> {
     let lat_long = fetch_lat_long(&params.city).await?;
     let weather = fetch_weather(lat_long).await?;
     let display = WeatherDisplay::try_from(weather)?;
