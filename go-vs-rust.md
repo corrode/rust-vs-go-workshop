@@ -1092,15 +1092,14 @@ async fn weather(Query(params): Query<WeatherQuery>) -> Result<String, StatusCod
 
 Note how we mix the parsing logic with the handler logic.
 Let's clean this up a bit by moving the parsing logic into a
-`TryFrom` implementation:
+constructor function:
 
 ```rust
-impl TryFrom<WeatherResponse> for WeatherDisplay {
-    type Error = Box<dyn std::error::Error>;
-
-    fn try_from(response: WeatherResponse) -> Result<Self, Self::Error> {
+impl WeatherDisplay {
+    /// Create a new `WeatherDisplay` from a `WeatherResponse`.
+    fn new(city: String, response: WeatherResponse) -> Self {
         let display = WeatherDisplay {
-            city: response.timezone,
+            city,
             forecasts: response
                 .hourly
                 .time
@@ -1112,10 +1111,9 @@ impl TryFrom<WeatherResponse> for WeatherDisplay {
                 })
                 .collect(),
         };
-        Ok(display)
+        display
     }
-}
-```
+}```
 
 That's a start. Our handler now looks like this:
 
@@ -1127,8 +1125,7 @@ async fn weather(Query(params): Query<WeatherQuery>) -> Result<String, StatusCod
     let weather = fetch_weather(lat_long)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let display = WeatherDisplay::try_from(weather)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let display = WeatherDisplay::new(params.city, weather);
     Ok(format!("{:?}", display))
 }
 ```
@@ -1205,7 +1202,7 @@ for error handling, we managed to simplify our handler quite a bit:
 async fn weather(Query(params): Query<WeatherQuery>) -> Result<String, AppError> {
     let lat_long = fetch_lat_long(&params.city).await?;
     let weather = fetch_weather(lat_long).await?;
-    let display = WeatherDisplay::try_from(weather)?;
+    let display = WeatherDisplay::new(params.city, weather);
     Ok(format!("{:?}", display))
 }
 ```

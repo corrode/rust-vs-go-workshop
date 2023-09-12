@@ -105,12 +105,10 @@ pub struct WeatherQuery {
     pub city: String,
 }
 
-impl TryFrom<WeatherResponse> for WeatherDisplay {
-    type Error = anyhow::Error;
-
-    fn try_from(response: WeatherResponse) -> Result<Self, Self::Error> {
+impl WeatherDisplay {
+    fn new(city: String, response: WeatherResponse) -> Self {
         let display = WeatherDisplay {
-            city: response.timezone,
+            city,
             forecasts: response
                 .hourly
                 .time
@@ -122,14 +120,14 @@ impl TryFrom<WeatherResponse> for WeatherDisplay {
                 })
                 .collect(),
         };
-        Ok(display)
+        display
     }
 }
 
 async fn weather(Query(params): Query<WeatherQuery>) -> Result<WeatherDisplay, AppError> {
     let lat_long = fetch_lat_long(&params.city).await?;
     let weather = fetch_weather(lat_long).await?;
-    let display = WeatherDisplay::try_from(weather)?;
+    let display = WeatherDisplay::new(params.city, weather);
     Ok(display)
 }
 
