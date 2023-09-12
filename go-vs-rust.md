@@ -819,7 +819,150 @@ Rust is an expression-based language, which means that we don't have to
 use `return` to return a value from a function. Instead, the last value
 of a function is returned.
 
+We can now update our `weather` function to use `fetch_lat_long`.
 
+Our first attempt might look like this:
+
+```rust
+async fn weather(city: String) -> String {
+    println!("city: {}", city);
+    let lat_long = fetch_lat_long(&city).await.unwrap();
+    format!("{}: {}, {}", city, lat_long.latitude, lat_long.longitude)
+}
+```
+
+First we print the city to the console, then we fetch the latitude and
+longitude and unwrap (i.e. "unpack") the result. If the result is an error, the program will panic. This is not ideal, but we will fix it later.
+
+We then use the latitude and longitude to create a string and return it.
+
+Let's run the program and see what happens:
+
+```bash
+curl -v "localhost:3000/weather?city=Berlin"
+*   Trying 127.0.0.1:3000...
+* Connected to localhost (127.0.0.1) port 3000 (#0)
+> GET /weather?city=Berlin HTTP/1.1
+> Host: localhost:3000
+> User-Agent: curl/8.1.2
+> Accept: */*
+> 
+* Empty reply from server
+* Closing connection 0
+curl: (52) Empty reply from server
+```
+
+Furthermore, we get this output:
+
+```bash
+city:
+```
+
+The `city` parameter is empty. What happened?
+
+The problem is that we are using the `String` type for the `city`
+parameter. This type is not a valid [extractor](https://docs.rs/axum/latest/axum/extract/index.html).
+
+We can use the `Query` extractor instead:
+
+```rust
+async fn weather(Query(params): Query<HashMap<String, String>>) -> String {
+    let city = params.get("city").unwrap();
+    let lat_long = fetch_lat_long(&city).await.unwrap();
+    format!("{}: {}, {}", *city, lat_long.latitude, lat_long.longitude)
+}
+```
+
+This will work, but it is not very idiomatic. We have to `unwrap`
+the `Option` to get the city. We also need to pass `*city` to the
+`format!` macro to get the value instead of the reference. (It's
+called "dereferencing" in Rust lingo.)
+
+We could create a struct that represents the query parameters:
+
+```rust
+#[derive(Deserialize)]
+pub struct WeatherQuery {
+    pub city: String,
+}
+```
+
+We can then use this struct as an extractor and avoid the `unwrap`:
+
+```rust
+async fn weather(Query(params): Query<WeatherQuery>) -> String {
+    let lat_long = fetch_lat_long(&params.city).await.unwrap();
+    format!("{}: {}, {}", params.city, lat_long.latitude, lat_long.longitude)
+}
+```
+
+Cleaner!
+It's a little more involved than the Go version, but it's also more
+type-safe. You can imagine that we can add constraints to the struct
+to add validation. For example, we could require that the city is at
+least 3 characters long.
+
+Now about the `unwrap` in the `weather` function.
+Ideally, we would return an error if the city is not found. We can do
+this by changing our return type.
+
+In axum, anything that implements [`IntoResponse`](https://docs.rs/axum/latest/axum/response/trait.IntoResponse.html) can be returned from handlers, however it is advisable to return
+a concrete type, as there are 
+[some caveats with returning `impl IntoResponse`] (https://docs.rs/axum/latest/axum/response/index.html)
+
+In our case, we can return a `Result` type:
+
+```rust
+async fn weather(Query(params): Query<WeatherQuery>) -> Result<String, StatusCode> {
+    let lat_long = fetch_lat_long(&params.city)
+        .await
+        .map_err(|_| StatusCode::NOT_FOUND)?;
+    Ok(format!(
+        "{}: {}, {}",
+        params.city, lat_long.latitude, lat_long.longitude
+    ))
+}
+```
+
+This will return a `404` status code if the city is not found.
+We use `map_err` to convert the error into a `StatusCode` and then
+use the `?` operator to propagate the error.
+
+It would be equally fine and maybe a little easier to read to use `match` instead of `map_err`:
+
+```rust
+async fn weather(Query(params): Query<WeatherQuery>) -> Result<String, StatusCode> {
+    match fetch_lat_long(&params.city).await {
+        Ok(lat_long) => Ok(format!(
+            "{}: {}, {}",
+            params.city, lat_long.latitude, lat_long.longitude
+        )),
+        Err(_) => Err(StatusCode::NOT_FOUND),
+    }
+}
+```
+
+In Rust, there are usually multiple ways to do things. It's a matter of
+taste which version you prefer.
+
+In any case, let's test our program:
+
+```bash
+curl "localhost:3000/weather?city=Berlin"
+Berlin: 52.52437, 13.41053
+```
+
+and
+
+```bash
+curl -I "localhost:3000/weather?city=abcdedfg"
+HTTP/1.1 404 Not Found
+```
+
+Let's write second function, which will return the weather for a given
+latitude and longitude:
+
+```rust
 
 #### Templates 
 
