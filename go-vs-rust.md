@@ -1176,7 +1176,30 @@ You don't have to fully understand this code.
 Suffice to say that will set up the error handling for the application
 so that we don't have to deal with it in the handler.
 
-With that, our handler becomes quite simple:
+We have to adjust the `fetch_lang_long` and `fetch_weather` functions
+to return a `Result` with an `anyhow::Error`:
+
+```rust
+async fn fetch_lat_long(city: &str) -> Result<LatLong, anyhow::Error> {
+    let endpoint = format!(
+        "https://geocoding-api.open-meteo.com/v1/search?name={}&count=1&language=en&format=json",
+        city
+    );
+    let response = reqwest::get(&endpoint).await?.json::<GeoResponse>().await?;
+    response.results.get(0).cloned().context("No results found")
+}
+```
+
+and
+
+```rust
+async fn fetch_weather(lat_long: LatLong) -> Result<WeatherResponse, anyhow::Error> {
+  // code stays the same
+}
+```
+
+At the price of adding a dependency and adding the additional boilerplate
+for error handling, we managed to simplify our handler quite a bit:
 
 ```rust
 async fn weather(Query(params): Query<WeatherQuery>) -> Result<String, AppError> {
@@ -1187,14 +1210,52 @@ async fn weather(Query(params): Query<WeatherQuery>) -> Result<String, AppError>
 }
 ```
 
-We have to adjust the `fetch_lang_long` and `fetch_weather` functions
-to return a `Result` with our custom error type:
-
-```rust
-
-
-
 #### Templates 
+
+`axum` doesn't come with a templating engine.
+We have to pick one ourselves.
+I usually use either [tera](https://github.com/Keats/tera) or [askama](https://github.com/djc/askama/tree/main) with a slight preference for `askama` because it supports compile-time syntax checks. With that, you cannot accidentally introduce typos in a template. Every variable you use in a template has to be defined in the code.
+
+```bash
+# Enable axum support
+cargo add askama --features=with-axum
+# I also neede to add this to make it compile
+cargo add askama_axum
+```
+
+Let's create a `templates` directory and add a `weather.html` template,
+similar to the Go table template we created earlier:
+
+```html
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Weather</title>
+  </head>
+  <body>
+    <h1>Weather for {{ city }}</h1>
+    <table>
+      <thead>
+        <tr>
+          <th>Date</th>
+          <th>Temperature</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for forecast in forecasts %}
+        <tr>
+          <td>{{ forecast.date }}</td>
+          <td>{{ forecast.temperature }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </body>
+</html>
+```
+
+
 
 #### Database access
 
