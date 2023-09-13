@@ -10,7 +10,7 @@ use axum::{
 };
 use http::request::Parts;
 use serde::Deserialize;
-use sqlx::PgPool;
+use sqlx::{Executor, PgPool};
 use std::str::from_utf8;
 
 // Make our own error that wraps `anyhow::Error`.
@@ -230,7 +230,11 @@ async fn stats(_user: User, State(pool): State<PgPool>) -> Result<StatsTemplate,
 }
 
 #[shuttle_runtime::main]
-async fn main(#[shuttle_aws_rds::Postgres] pool: PgPool) -> shuttle_axum::ShuttleAxum {
+async fn main(#[shuttle_shared_db::Postgres] pool: PgPool) -> shuttle_axum::ShuttleAxum {
+    pool.execute(include_str!("../schema.sql"))
+        .await
+        .context("Failed to initialize DB")?;
+
     let router = Router::new()
         .route("/", get(index))
         .route("/weather", get(weather))
