@@ -22,33 +22,26 @@ Although that we are aware of our own biases and preferences, we
 we will try to be as objective as possible and
 highlight the strengths and weaknesses of *both* languages.
 
-## Syntax
-
-## Concurrency
-
-## Web ecosystem
-
 ## Building a small web service
 
 Many comparisons between Go and Rust focus on the syntax and
 the language features. But in the end, what matters is how
 easy it is to use them for a non-trivial project.
 
-Since we are a platform as a service provider, we think that
-we can contribute the most by showing you how to build a small
+Since we are a platform-as-a-service provider, we think that
+we can contribute the most by *showing* you how to build a small
 web service in both languages. We will use the same task and
 popular libraries for both languages to compare the solutions
-side-by-side.
+side-by-side so that you can make up your own mind.
 
 We will cover the following topics:
 
 - Routing
 - Templating
 - Database access
-- Testing
 - Deployment
 
-We will leave out topics like client-side rendering
+We will leave out topics like client-side rendering or migrations,
 and focus on the server-side only.
 
 ### The task
