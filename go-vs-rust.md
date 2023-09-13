@@ -742,6 +742,14 @@ Stats
 
 Okay, that works. Let's add some actual logic to our handlers.
 
+#### Axum macros
+
+Before we move on, I'd like to mention that axum has some rough edges.
+E.g. it will yell at you if you forgot to make your handler function async.
+So if you run into `Handler<_, _> is not implemented` errors, add the [axum-macros](https://docs.rs/axum-macros/latest/axum_macros/) crate and annotate your handler with `#[axum_macros::debug_handler]`. This will give you much better error messages. 
+
+#### Fetching the latitude and longitude
+
 Let's write a function that fetches the latitude and longitude for a given city from an external API.
 
 Here are the structs representing the response from the API:
@@ -1444,8 +1452,97 @@ async fn weather(
 And that's it! We now have a working web app with a database backend.
 The behavior is identical to before, but now we chache the latitudes and longitudes.
 
-
 #### Middleware
+
+The last feature that we're missing from our Go version is the `/stats` endpoint. Remember that it shows the recent queries and is behind basic auth.
+
+Let's start with basic auth.
+
+It took me a while to figure out how to do this.
+There are numerous authentication libraries for axum, but very little
+information on how to do basic auth.
+
+I ended up writing a custom middleware, that would 
+- check if the request has an `Authorization` header
+- if it does, check if the header contains a valid username and password
+- if it does, return an "unauthorized" response and a `WWW-Authenticate` header, which instructs the browser to show a login dialog.
+
+Here's the code:
+
+```rust
+/// A user that is authorized to access the stats endpoint.
+/// 
+/// No fields are required, we just need to know that the user is authorized. In
+/// a production application you would probably want to have some kind of user
+/// ID or similar here.
+struct User;
+
+#[async_trait]
+impl<S> FromRequestParts<S> for User
+where
+    S: Send + Sync,
+{
+    type Rejection = axum::http::Response<axum::body::Body>;
+
+    async fn from_request_parts(parts: &mut Parts, _: &S) -> Result<Self, Self::Rejection> {
+        let auth_header = parts
+            .headers
+            .get("Authorization")
+            .and_then(|header| header.to_str().ok());
+
+        if let Some(auth_header) = auth_header {
+            if auth_header.starts_with("Basic ") {
+                let credentials = auth_header.trim_start_matches("Basic ");
+                let decoded = base64::decode(credentials).unwrap_or_default();
+                let credential_str = from_utf8(&decoded).unwrap_or("");
+
+                // Our username and password are hardcoded here.
+                // In a real app, you'd want to read them from the environment.
+                if credential_str == "forecast:forecast" {
+                    return Ok(User);
+                }
+            }
+        }
+
+        let reject_response = axum::http::Response::builder()
+            .status(StatusCode::UNAUTHORIZED)
+            .header(
+                "WWW-Authenticate",
+                "Basic realm=\"Please enter your credentials\"",
+            )
+            .body(axum::body::Body::from("Unauthorized"))
+            .unwrap();
+
+        Err(reject_response)
+    }
+}
+```
+
+[FromRequestParts](https://docs.rs/axum/latest/axum/extract/trait.FromRequestParts.html) is a trait that allows us to extract data from the request.
+There's also [FromRequest](https://docs.rs/axum/latest/axum/extract/trait.FromRequest.html), which consumes the entire request body and can thus only be run once for handlers. In our case, we just need to read the `Authorization` header, so `FromRequestParts` is enough.
+
+The beauty is, that we can simple add the `User` type to any handler and it will extract the user from the request:
+
+```rust
+async fn stats(user: User) -> &'static str {
+    "We're authorized!"
+}
+```
+
+Now about the actual logic for the `/stats` endpoint.
+
+```rust
+#[derive(Template)]
+#[template(path = "stats.html")]
+struct StatsTemplate {
+    pub cities: Vec<City>,
+}
+
+async fn stats(_user: User, State(pool): State<PgPool>) -> Result<StatsTemplate, AppError> {
+    let cities = get_last_cities(&pool).await?;
+    Ok(StatsTemplate { cities })
+}
+```
 
 ## Deployment
 
@@ -1455,6 +1552,17 @@ The behavior is identical to before, but now we chache the latitudes and longitu
   * easy to learn, fast, good for web services
   * batteries included. We did a lot with just the standard library.
   * Our only dependency was Gin, which is a very popular web framework.
+  
+- Rust:
+  * fast, safe, evolving ecosystem for web services
+  * no batteries included. We had to add a lot of dependencies to get the same functionality as in Go and write our own small middleware.
+  * the final handler code was free from distracting error handling, because we used our own error type and the `?` operator. This makes for very readable code, at the cost of having to write additional adapter logic. 
+  
+Personally, I'm a big fan of Rust and I think it's a great language for web services. But there are still a lot of rough edges and missing pieces in the ecosystem.
 
-## Further reading
+Which one to pick? That depends on the timeframe for project and your team's experience. If you're looking for a quick and easy solution, Go is probably the better choice. If you're looking for a long-term solution, and you're willing to invest in learning Rust, it's a great choice.
+
+I invite you to compare both solutions and decide for yourself which one you like better.
+
+In any case, it was fun to build the same project in two different languages and look at the differences in idioms and ecosystem. Even though the end result is the same, the way we got there was quite different.
 
