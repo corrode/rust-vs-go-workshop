@@ -1546,6 +1546,87 @@ async fn stats(_user: User, State(pool): State<PgPool>) -> Result<StatsTemplate,
 
 ## Deployment
 
+Lastly, let's talk about deployment.
+
+For Golang, you can use any cloud provider that supports Docker.
+We won't go into details here, as there are plenty of services that support this.
+
+You can do the same with Rust, but there are also some other options.
+One of them is [shuttle](https://www.shuttle.rs/), of course and the way
+it works is different to other services: You don't need to build a Docker image
+and push it to a registry. Instead, you just push your code to a git repository
+and shuttle will run the binary for you.
+
+Thanks to Rust's procedural macros, you can enhance your code with additional
+functionality quickly.
+
+All it takes to get started is [`#[shuttle_runtime::main]`](https://docs.shuttle.rs/examples/axum) on your main function:
+
+```rust
+#[shuttle_runtime::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Rest of your code goes here
+}
+```
+
+To get started, [install the shuttle CLI](https://docs.shuttle.rs/getting-started/installation) and dependencies:
+```bash
+cargo binstall cargo-shuttle
+cargo add shuttle-axum shuttle-runtime
+```
+
+Let's modify our `main` function to use shuttle.
+Note how we no longer need the port binding, as shuttle will take care of that for us! We just hand it the router and it will take care of the rest.
+
+```rust
+#[shuttle_runtime::main]
+async fn main() -> shuttle_axum::ShuttleAxum {
+    let db_connection_str = std::env::var("DATABASE_URL").context("DATABASE_URL must be set")?;
+    let pool = sqlx::PgPool::connect(&db_connection_str)
+        .await
+        .context("can't connect to database")?;
+
+    let router = Router::new()
+        .route("/", get(index))
+        .route("/weather", get(weather))
+        .route("/stats", get(stats))
+        .with_state(pool);
+
+    Ok(router.into())
+}
+```
+
+Next, let's set up our production postgres database.
+There's a macro for that, too. 
+
+```bash
+cargo add shuttle-aws-rds --features postgres
+```
+
+and
+
+```rust
+#[shuttle_runtime::main]
+async fn main(#[shuttle_aws_rds::Postgres] pool: PgPool) -> shuttle_axum::ShuttleAxum {
+    let router = Router::new()
+        .route("/", get(index))
+        .route("/weather", get(weather))
+        .route("/stats", get(stats))
+        .with_state(pool);
+
+    Ok(router.into())
+}
+```
+
+We got rid of a lot of boilerplate code and can now deploy our app with a single command:
+
+```bash
+cargo shuttle deploy
+```
+
+
+
+
 ## Which language is right for you?
 
 - Go: 
