@@ -1600,14 +1600,18 @@ Next, let's set up our production postgres database.
 There's a macro for that, too. 
 
 ```bash
-cargo add shuttle-aws-rds --features postgres
+cargo add shuttle-shared-db --features=postgres
 ```
 
 and
 
 ```rust
 #[shuttle_runtime::main]
-async fn main(#[shuttle_aws_rds::Postgres] pool: PgPool) -> shuttle_axum::ShuttleAxum {
+async fn main(#[shuttle_shared_db::Postgres] pool: PgPool) -> shuttle_axum::ShuttleAxum {
+    pool.execute(include_str!("../schema.sql"))
+        .await
+        .context("Failed to initialize DB")?;
+
     let router = Router::new()
         .route("/", get(index))
         .route("/weather", get(weather))
@@ -1615,17 +1619,25 @@ async fn main(#[shuttle_aws_rds::Postgres] pool: PgPool) -> shuttle_axum::Shuttl
         .with_state(pool);
 
     Ok(router.into())
-}
-```
+}```
 
-We got rid of a lot of boilerplate code and can now deploy our app with a single command:
+See that part about the schema? That's how we initialize our database with
+our existing table definitions. [Migrations are also supported](https://docs.shuttle.rs/migration/migrating-to-shuttle)
+
+We got rid of a lot of boilerplate code and can now deploy our app 
+with ease.
 
 ```bash
+# We only need to run this once
+cargo shuttle project start
+
+# Run as often as you like
 cargo shuttle deploy
 ```
 
-
-
+When it's done, it will print the URL to the service.
+It should work just like before, but now it's running on a server in the cloud. 
+🚀
 
 ## Which language is right for you?
 
