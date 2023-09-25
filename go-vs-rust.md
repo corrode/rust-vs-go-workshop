@@ -284,10 +284,14 @@ I like the log output and it's quite fast, too!
 #### Templates
 
 We got our endpoint, but raw JSON is not very useful to a normal user.
-In a real-world application, we would probably serve the JSON response on an API endpoint (say `/api/v1/weather/:city`) and add a separate endpoint that returns the HTML page. For the sake of simplicity, we will just return the HTML page directly.
+In a real-world application, we would probably serve the JSON response on an API
+endpoint (say `/api/v1/weather/:city`) and add a separate endpoint that returns
+the HTML page. For the sake of simplicity, we will just return the HTML page
+directly.
 
 Let's add a simple HTML page that displays the weather forecast for a given city
-as a table. We will use the `html/template` package from the standard library to render the HTML page.
+as a table. We will use the `html/template` package from the standard library to
+render the HTML page.
 
 First, let's add some structs for our view:
 
@@ -314,9 +318,12 @@ type Forecast struct {
 }
 ```
 
-This is just a direct mapping of the relevant fields in the JSON response to a struct. There are tools like [transform](https://transform.tools/json-to-go), which make conversion from JSON to Go structs easier. Take a look!
+This is just a direct mapping of the relevant fields in the JSON response to a
+struct. There are tools like [transform](https://transform.tools/json-to-go),
+which make conversion from JSON to Go structs easier. Take a look!
 
-Next we define a function, which converts the raw JSON response from the weather API into our new `WeatherDisplay` struct:
+Next we define a function, which converts the raw JSON response from the weather
+API into our new `WeatherDisplay` struct:
 
 ```go
 func extractWeatherData(city string, rawWeather string) (WeatherDisplay, error) {
@@ -411,10 +418,11 @@ Finally, we can create a template file `weather.html` in the `views` directory:
 
 (Take a look at the Gin documentation for more [details on how to use templates](https://gin-gonic.com/docs/examples/html-rendering/).)
 
-With that, we have a working web service that returns the weather forecast for a given city as an HTML page!
+With that, we have a working web service that returns the weather forecast for a
+given city as an HTML page!
 
-Oh! Perhaps we also want to create an index page with an input field,
-which allows us to enter a city name and displays the weather forecast for that city.
+Oh! Perhaps we also want to create an index page with an input field, which
+allows us to enter a city name and displays the weather forecast for that city.
 
 Let's add a new route handler for the index page:
 
@@ -452,12 +460,14 @@ but since we care more about the backend, we will leave it at that.
 
 #### Database access
 
-Our service fetches the latitude and longitude for a given city from an external API on every single request. That's probably fine in the
-beginning, but eventually we might want to cache the results in a database
-to avoid unnecessary API calls.
+Our service fetches the latitude and longitude for a given city from an external
+API on every single request. That's probably fine in the beginning, but
+eventually we might want to cache the results in a database to avoid unnecessary
+API calls.
 
 To do so, let's add a database to our web service.
-We will use [PostgreSQL](https://www.postgresql.org/) as our database and [pgx](https://github.com/jackc/pgx) as the database driver.
+We will use [PostgreSQL](https://www.postgresql.org/) as our database and
+[pgx](https://github.com/jackc/pgx) as the database driver.
 
 First, we create a file named `init.sql`, which will be used to initialize our database:
 
@@ -477,10 +487,12 @@ The `SERIAL` type is a PostgreSQL auto-incrementing integer. Otherwise we would
 have to generate the IDs ourselves on insert.
 To make things fast, we will also add an index on the `name` column.
 
-It's probably easiest to use Docker or any of the cloud providers.
-At the end of the day, you just need *a database URL*, which you can pass to your web service as an environment variable.
+It's probably easiest to use Docker or any of the cloud providers. At the end of
+the day, you just need *a database URL*, which you can pass to your web service
+as an environment variable.
 
-We won't go into the details of setting up a database here, but a simple way to get a PostgreSQL database running with Docker locally is:
+We won't go into the details of setting up a database here, but a simple way to
+get a PostgreSQL database running with Docker locally is:
 
 ```
 docker run -p 5432:5432 -e POSTGRES_USER=forecast -e POSTGRES_PASSWORD=forecast -e POSTGRES_DB=forecast -v `pwd`/init.sql:/docker-entrypoint-initdb.d/index.sql -d postgres
@@ -550,7 +562,8 @@ r.GET("/weather", func(c *gin.Context) {
 })
 ```
 
-With that, we have a working web service that stores the latitude and longitude for a given city in a database and fetches it from there on subsequent requests.
+With that, we have a working web service that stores the latitude and longitude
+for a given city in a database and fetches it from there on subsequent requests.
 
 #### Middleware
 
